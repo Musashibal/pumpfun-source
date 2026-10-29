@@ -15,6 +15,36 @@ class ComparisonTests(unittest.TestCase):
     def test_empty(self): self.assertEqual(compare(b'a',b'')['first_difference'],0)
 
 
+class RelocationTypeTests(unittest.TestCase):
+    def test_sbpf_relocation_names(self):
+        types = (0, 1, 8, 10, 2, 255)
+        blob = b''.join(struct.pack('<QQ', 0, typ) for typ in types)
+        elf = SimpleNamespace(
+            b=blob, symbols={}, lo=0x1000, hi=0x2000,
+            secs={'.rel.dyn': (0, 9, 0, 0, 0, len(blob), 0, 0, 8, 16)},
+        )
+        report = deep_section_analysis.analyze_relocations(elf)
+        self.assertEqual(
+            [entry['type'] for entry in report['entries']],
+            ['R_BPF_NONE', 'R_BPF_64_64', 'R_BPF_64_RELATIVE',
+             'R_BPF_64_32', 'UNKNOWN_2', 'UNKNOWN_255'],
+        )
+        self.assertEqual([entry['type_id'] for entry in report['entries']], list(types))
+
+    def test_captured_relative_and_call_relocations(self):
+        for name in ('pump', 'pump_amm', 'pump_fees', 'mayhem'):
+            with self.subTest(program=name):
+                elf = deep_section_analysis.Elf(
+                    analyze.ROOT / 'evidence/original' / name / 'deployed.so')
+                report = deep_section_analysis.analyze_relocations(elf)
+                self.assertEqual(set(report['type_distribution']),
+                                 {'R_BPF_64_RELATIVE', 'R_BPF_64_32'})
+                for entry in report['entries']:
+                    self.assertEqual(entry['type'], {
+                        8: 'R_BPF_64_RELATIVE', 10: 'R_BPF_64_32',
+                    }[entry['type_id']])
+
+
 class RelocationTargetTests(unittest.TestCase):
     def test_target_section_uses_address_not_file_offset(self):
         blob = bytearray(64)

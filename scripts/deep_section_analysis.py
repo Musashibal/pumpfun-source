@@ -184,9 +184,12 @@ def analyze_data_layout(elf):
 
 def analyze_relocations(elf):
     """Full relocation table analysis with type classification."""
+    # Solana's SBPF loader uses 8 for relative addresses and 10 for calls;
+    # these are not the generic BPF absolute-data relocation names.
+    # https://github.com/anza-xyz/sbpf/blob/f754c707f99779a756978f87c9afd25eeeb3d92e/src/elf.rs#L175-L207
     reloc_types = {
-        0: "R_BPF_NONE", 1: "R_BPF_64_64", 2: "R_BPF_64_RELATIVE",
-        8: "R_BPF_64_ABS64", 10: "R_BPF_64_ABS32",
+        0: "R_BPF_NONE", 1: "R_BPF_64_64",
+        8: "R_BPF_64_RELATIVE", 10: "R_BPF_64_32",
     }
 
     rel_sec = elf.secs.get(".rel.dyn")
