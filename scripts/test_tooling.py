@@ -4,6 +4,7 @@ import struct
 import unittest
 from types import SimpleNamespace
 import deep_section_analysis
+import deep_disassembly
 import analyze
 from compare import compare
 class ComparisonTests(unittest.TestCase):
@@ -13,6 +14,54 @@ class ComparisonTests(unittest.TestCase):
     def test_truncated_padding(self): self.assertFalse(compare(b'abc\0\0',b'abc\0')['full_byte_equality'])
     def test_extended_padding(self): self.assertFalse(compare(b'abc\0',b'abc\0\0')['full_byte_equality'])
     def test_empty(self): self.assertEqual(compare(b'a',b'')['first_difference'],0)
+
+
+class InternalCallDecodeTests(unittest.TestCase):
+    def test_forward_and_backward_internal_targets(self):
+        for offset, immediate, target in ((8, 2, 32), (16, -2, 8)):
+            with self.subTest(immediate=immediate):
+                blob = bytes(offset) + struct.pack('<BBhi', 0x85, 0x10, 0, immediate)
+                elf = SimpleNamespace(
+                    funcs=[{'start': target, 'name': 'helper'}], relocations={})
+                record, size = deep_disassembly.decode_instruction(blob, offset, elf)
+                self.assertEqual(size, 8)
+                self.assertEqual(record['call_target'], target)
+                self.assertEqual(record['call_name'], 'helper')
+                self.assertEqual(record['mnemonic'], 'call helper')
+                self.assertNotIn('extern_symbol', record)
+
+    def test_relocated_placeholder_stays_external(self):
+        blob = struct.pack('<BBhi', 0x85, 0x10, 0, -1)
+        elf = SimpleNamespace(funcs=[], relocations={
+            0: {'type': 10, 'symbol': 'sol_log_'},
+        })
+        record, _ = deep_disassembly.decode_instruction(blob, 0, elf)
+        self.assertEqual(record['extern_symbol'], 'sol_log_')
+        self.assertEqual(record['mnemonic'], 'call_extern sol_log_')
+        self.assertNotIn('call_target', record)
+
+    def test_hashed_syscall_stays_syscall(self):
+        blob = struct.pack('<BBhI', 0x85, 0, 0, 0x207559bd)
+        elf = SimpleNamespace(funcs=[], relocations={})
+        record, _ = deep_disassembly.decode_instruction(blob, 0, elf)
+        self.assertEqual(record['syscall'], 'sol_log_64_')
+        self.assertNotIn('call_target', record)
+
+    def test_captured_call_targets_match_window_reader(self):
+        for name in ('pump', 'pump_amm', 'pump_fees', 'mayhem'):
+            with self.subTest(program=name):
+                elf = deep_disassembly.Elf(
+                    analyze.ROOT / 'evidence/original' / name / 'deployed.so')
+                self.assertGreater(len(elf.calls), 0)
+                for offset, target in elf.calls.items():
+                    record, _ = deep_disassembly.decode_instruction(elf.b, offset, elf)
+                    self.assertEqual(record['call_target'], target)
+                    self.assertNotIn('extern_symbol', record)
+                for offset, relocation in elf.relocations.items():
+                    if relocation['type'] == 10:
+                        record, _ = deep_disassembly.decode_instruction(elf.b, offset, elf)
+                        self.assertEqual(record['extern_symbol'], relocation['symbol'])
+                        self.assertNotIn('call_target', record)
 
 
 class RelocationTargetTests(unittest.TestCase):

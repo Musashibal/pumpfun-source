@@ -104,7 +104,9 @@ def decode_instruction(b, offset, elf):
     if opcode == 0x95:
         result["mnemonic"] = "exit"
     elif opcode == 0x85:
-        if src_reg == 0x10:
+        # src_reg is the decoded nibble, not the packed register byte.
+        # Type-10 external calls also use src=1 with a placeholder immediate.
+        if src_reg == 1 and elf.relocations.get(offset, {}).get("type") != 10:
             target = offset + 8 + imm * 8
             target_name = None
             for f in elf.funcs:
