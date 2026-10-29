@@ -127,6 +127,18 @@ def decode_instruction(b, offset, elf):
             sym = reloc.get("symbol", "?")
             result["mnemonic"] = f"call_extern {sym}"
             result["extern_symbol"] = sym
+    elif opcode == 0x8d:
+        # CALL_REG's register field changes across SBPF versions. The target
+        # address is runtime data, not a statically resolved direct call.
+        image = getattr(elf, "b", b"")
+        version = struct.unpack_from("<I", image, 48)[0] if len(image) >= 52 else None
+        register = (imm if version in (0, 1) else src_reg if version == 2
+                    else dst_reg if version in (3, 4) else None)
+        if register is not None and 0 <= register <= 10:
+            result["mnemonic"] = f"callx r{register}"
+            result["indirect_call_register"] = register
+        else:
+            result["mnemonic"] = f"raw_{opcode:#04x} {dst},{src},{off},{imm}"
     elif opcode == 0x18:
         imm2 = struct.unpack_from("<i", b, offset + 12)[0]
         val64 = (imm & 0xFFFFFFFF) | (imm2 << 32)
