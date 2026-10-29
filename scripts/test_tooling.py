@@ -16,6 +16,63 @@ class ComparisonTests(unittest.TestCase):
     def test_empty(self): self.assertEqual(compare(b'a',b'')['first_difference'],0)
 
 
+class SyscallFingerprintTests(unittest.TestCase):
+    def test_mixed_calls_preserve_order_and_skip_lddw_data(self):
+        call = lambda src, imm: struct.pack('<BBhI', 0x85, src, 0, imm)
+        code = (call(0, 0x207559bd) + call(0x10, 0xffffffff)
+                + call(0x10, 0xffffffff) + call(0, 0x12345678)
+                + struct.pack('<BBhi', 0x18, 0, 0, 0) + call(0, 0x207559bd)
+                + call(0x10, 0xffffffff) + call(0x10, 1))
+        # Symbol 1 is imported, symbol 2 is a defined BPF function.
+        dynsym = bytes(24) + struct.pack('<IBBHQQ', 0, 0, 0, 0, 0, 0)
+        dynsym += struct.pack('<IBBHQQ', 0, 2, 0, 1, 16, 8)
+        rel = b''.join(struct.pack('<QQ', at, (idx << 32) | 10)
+                       for at, idx in ((8, 1), (16, 2), (48, 1)))
+        elf = SimpleNamespace(b=code + dynsym + rel, symbols={1: 'abort', 2: 'helper'},
+            secs={'.dynsym': (0, 11, 0, 0, len(code), len(dynsym), 0, 0, 8, 24),
+                  '.rel.dyn': (0, 9, 0, 0, len(code)+len(dynsym), len(rel), 0, 0, 8, 16)})
+        fp = deep_disassembly.fingerprint_window(elf, 0, len(code))
+        self.assertEqual(fp['syscall_sequence'],
+                         ['sol_log_64_', 'abort', 'unknown_0x12345678', 'abort'])
+        self.assertEqual(fp['opcode_count'], 7)
+
+    def test_missing_invalid_and_noncall_relocations(self):
+        code = struct.pack('<BBhI', 0x85, 0x10, 0, 0xffffffff)
+        for typ, index, entry_size in ((8, 1, 24), (10, 5, 24), (10, 1, 0)):
+            with self.subTest(typ=typ, index=index, entry_size=entry_size):
+                sym = bytes(48)
+                rel = struct.pack('<QQ', 0, (index << 32) | typ)
+                elf = SimpleNamespace(b=code + sym + rel, symbols={1: 'abort'},
+                    secs={'.dynsym': (0, 11, 0, 0, 8, 48, 0, 0, 8, entry_size),
+                          '.rel.dyn': (0, 9, 0, 0, 56, 16, 0, 0, 8, 16)})
+                self.assertEqual(deep_disassembly.fingerprint_window(
+                    elf, 0, 8)['syscall_sequence'], [])
+        elf.secs = {}
+        self.assertEqual(deep_disassembly.fingerprint_window(elf, 0, 8)['syscall_sequence'], [])
+
+    def test_captured_import_sequences(self):
+        for name, count in (('pump', 269), ('pump_amm', 173),
+                            ('pump_fees', 154), ('mayhem', 133)):
+            with self.subTest(program=name):
+                elf = deep_disassembly.Elf(analyze.ROOT / 'evidence/original' / name / 'deployed.so')
+                sym = elf.secs['.dynsym']
+                rel = elf.secs['.rel.dyn']
+                expected = []
+                for pos in range(rel[4], rel[4] + rel[5], 16):
+                    at, info = struct.unpack_from('<QQ', elf.b, pos)
+                    if info & 0xffffffff != 10:
+                        continue
+                    index = info >> 32
+                    fields = struct.unpack_from('<IBBHQQ', elf.b, sym[4] + index * 24)
+                    if fields[3] == 0:
+                        expected.append((at, elf.symbols[index]))
+                expected = [label for _, label in sorted(expected)]
+                self.assertEqual(len(expected), count)
+                self.assertEqual(deep_disassembly.fingerprint_window(
+                    elf, elf.lo, elf.hi)['syscall_sequence'], expected)
+                self.assertNotIn('custom_panic', expected)
+
+
 class InternalCallDecodeTests(unittest.TestCase):
     def test_forward_and_backward_internal_targets(self):
         for offset, immediate, target in ((8, 2, 32), (16, -2, 8)):
