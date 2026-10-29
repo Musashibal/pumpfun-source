@@ -178,7 +178,7 @@ def decode_instruction(b, offset, elf):
         else:
             result["mnemonic"] = f"{op} {dst}, {imm}"
     elif opcode & 0x07 in (0x01, 0x02, 0x03):
-        size_map = {0x00: "w", 0x08: "dw", 0x10: "h", 0x18: "b"}
+        size_map = {0x00: "w", 0x08: "h", 0x10: "b", 0x18: "dw"}
         sz = size_map.get(opcode & 0x18, "?")
         cls = opcode & 0x07
         if cls == 0x01:  # LDX

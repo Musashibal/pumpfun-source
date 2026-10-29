@@ -55,6 +55,54 @@ class EndianDecodeTests(unittest.TestCase):
                 self.assertEqual(sorted(widths), [16] + [32] * 7)
 
 
+class MemoryWidthDecodeTests(unittest.TestCase):
+    # Explicit instruction spellings from SBPF's LD/ST/STX definitions,
+    # including word operations whose spelling was already correct.
+    FORMS = {
+        0x61: 'ldxw', 0x69: 'ldxh', 0x71: 'ldxb', 0x79: 'ldxdw',
+        0x62: 'stw', 0x6a: 'sth', 0x72: 'stb', 0x7a: 'stdw',
+        0x63: 'stxw', 0x6b: 'stxh', 0x73: 'stxb', 0x7b: 'stxdw',
+    }
+
+    def test_all_load_and_store_widths_preserve_operands(self):
+        for opcode, operation in self.FORMS.items():
+            with self.subTest(opcode=hex(opcode)):
+                cls = opcode & 7
+                regs = 5 if cls == 2 else 0x35
+                blob = struct.pack('<BBhi', opcode, regs, -16, 7)
+                record, size = deep_disassembly.decode_instruction(blob, 0, None)
+                if cls == 1:
+                    expected = f'{operation} r5, [r3-16]'
+                elif cls == 2:
+                    expected = f'{operation} [r5-16], 7'
+                else:
+                    expected = f'{operation} [r5-16], r3'
+                self.assertEqual(record['mnemonic'], expected)
+                self.assertTrue(record['memory_access'])
+                self.assertEqual((record['dst'], record['src'], record['off'], record['imm']),
+                                 (5, regs >> 4, -16, 7))
+                self.assertEqual(record['hex'], blob.hex())
+                self.assertEqual(size, 8)
+
+    def test_memory_widths_in_all_four_captured_programs(self):
+        for name in ('pump', 'pump_amm', 'pump_fees', 'mayhem'):
+            with self.subTest(program=name):
+                elf = deep_disassembly.Elf(
+                    analyze.ROOT / 'evidence/original' / name / 'deployed.so')
+                offset = elf.lo
+                seen = set()
+                mismatches = 0
+                while offset < elf.hi:
+                    record, size = deep_disassembly.decode_instruction(elf.b, offset, elf)
+                    opcode = elf.b[offset]
+                    if opcode in self.FORMS:
+                        seen.add(opcode)
+                        mismatches += record['mnemonic'].split()[0] != self.FORMS[opcode]
+                    offset += size
+                self.assertEqual(seen, set(self.FORMS))
+                self.assertEqual(mismatches, 0)
+
+
 class RelocationTargetTests(unittest.TestCase):
     def test_target_section_uses_address_not_file_offset(self):
         blob = bytearray(64)
