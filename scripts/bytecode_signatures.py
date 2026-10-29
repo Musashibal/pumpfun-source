@@ -90,10 +90,7 @@ def detect_error_patterns(elf, start, end):
     b = elf.b
     patterns = []
     offset = start
-    # A branch can appear in the final slot and jump to an earlier move.
-    # Bound the branch and its target independently instead of reserving a
-    # three-instruction suffix that this detector never reads.
-    while offset + 8 <= end:
+    while offset < end - 24:
         opcode = b[offset]
         # Look for: conditional branch + mov immediate + call/exit
         if opcode in (0x15, 0x1d, 0x25, 0x2d, 0x35, 0x3d,
@@ -102,7 +99,7 @@ def detect_error_patterns(elf, start, end):
             branch_off = struct.unpack_from("<h", b, offset + 2)[0]
             branch_target = offset + 8 + branch_off * 8
             # Check if branch leads to a mov + error pattern
-            if start <= branch_target and branch_target + 8 <= end:
+            if start <= branch_target < end:
                 next_at = branch_target
                 if b[next_at] in (0xb7, 0xb4):  # mov imm
                     err_code = struct.unpack_from("<i", b, next_at + 4)[0]
