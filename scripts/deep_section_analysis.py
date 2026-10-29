@@ -63,6 +63,10 @@ def sha256_bytes(data):
 def analyze_data_layout(elf):
     """Analyze .rodata and .data.rel.ro sections in detail."""
     results = {}
+    # SBPF V0-V2 use the lenient loader's legacy data relocations. V3+
+    # uses a strict loader without relocation; unknown flags stay untouched.
+    legacy_relocations = (len(elf.b) >= 52
+                          and struct.unpack_from("<I", elf.b, 48)[0] in (0, 1, 2))
 
     for section_name in [".rodata", ".data.rel.ro"]:
         if section_name not in elf.secs:
@@ -115,12 +119,22 @@ def analyze_data_layout(elf):
         pointers = []
         for i in range(0, len(data) - 7, 8):
             val = struct.unpack_from("<Q", data, i)[0]
+            provenance = {}
+            if (legacy_relocations
+                    and getattr(elf, "relocations", {}).get(start + i, {}).get("type") == 8
+                    and not elf.lo <= start + i < elf.hi):
+                # Legacy R_BPF_64_RELATIVE data slots encode the image-relative
+                # target at r_offset+4. Keep the raw slot; do not rebase or write
+                # captured bytes. This is pointer attribution, not execution.
+                provenance = {"raw_value": hex(val), "relocation_type": 8}
+                val >>= 32
             if elf.lo <= val < elf.hi and val % 8 == 0:
                 pointers.append({
                     "offset": i,
                     "address": hex(start + i),
                     "points_to": hex(val),
                     "in_text": True,
+                    **provenance,
                 })
             elif start <= val < start + size:
                 pointers.append({
@@ -129,6 +143,7 @@ def analyze_data_layout(elf):
                     "points_to": hex(val),
                     "in_text": False,
                     "self_reference": True,
+                    **provenance,
                 })
 
         # Constant value analysis (common numeric constants)
