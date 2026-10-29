@@ -50,6 +50,16 @@ class SyscallFingerprintTests(unittest.TestCase):
         elf.secs = {}
         self.assertEqual(deep_disassembly.fingerprint_window(elf, 0, 8)['syscall_sequence'], [])
 
+    def test_unresolved_relocation_does_not_become_literal_syscall(self):
+        code = struct.pack('<BBhI', 0x85, 0, 0, 0x207559bd) * 2
+        for sections in ({}, {'.dynsym': (0, 11, 0, 0, 16, 24, 0, 0, 8, 0),
+                              '.rel.dyn': (0, 9, 0, 0, 16, 16, 0, 0, 8, 16)}):
+            with self.subTest(sections=sections):
+                elf = SimpleNamespace(b=code, secs=sections, symbols={},
+                                      relocations={0: {'type': 10, 'symbol': 'unresolved'}})
+                self.assertEqual(deep_disassembly.fingerprint_window(
+                    elf, 0, len(code))['syscall_sequence'], ['sol_log_64_'])
+
     def test_captured_import_sequences(self):
         for name, count in (('pump', 269), ('pump_amm', 173),
                             ('pump_fees', 154), ('mayhem', 133)):

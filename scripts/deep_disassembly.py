@@ -325,7 +325,8 @@ def relocated_syscalls(elf):
     BPF-to-BPF; other call symbols are resolved through its syscall registry.
     None retains a defined-function relocation or an unresolved symbol.
     """
-    calls = {}
+    calls = {at: None for at, relocation in getattr(elf, 'relocations', {}).items()
+             if relocation.get('type') == 10}
     rel = elf.secs.get('.rel.dyn')
     sym = elf.secs.get('.dynsym')
     if rel is None or sym is None:
