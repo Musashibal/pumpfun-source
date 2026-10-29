@@ -4,6 +4,7 @@ import struct
 import unittest
 from types import SimpleNamespace
 import deep_section_analysis
+import deep_disassembly
 import analyze
 from compare import compare
 class ComparisonTests(unittest.TestCase):
@@ -13,6 +14,45 @@ class ComparisonTests(unittest.TestCase):
     def test_truncated_padding(self): self.assertFalse(compare(b'abc\0\0',b'abc\0')['full_byte_equality'])
     def test_extended_padding(self): self.assertFalse(compare(b'abc\0',b'abc\0\0')['full_byte_equality'])
     def test_empty(self): self.assertEqual(compare(b'a',b'')['first_difference'],0)
+
+
+class EndianDecodeTests(unittest.TestCase):
+    def test_conversion_direction_and_width(self):
+        for opcode, direction in ((0xd4, 'le'), (0xdc, 'be')):
+            for width in (16, 32, 64):
+                with self.subTest(direction=direction, width=width):
+                    blob = struct.pack('<BBhi', opcode, 5, 0, width)
+                    record, size = deep_disassembly.decode_instruction(blob, 0, None)
+                    self.assertEqual(record['mnemonic'], f'{direction}{width} r5')
+                    self.assertEqual(record['imm'], width)
+                    self.assertEqual(record['hex'], blob.hex())
+                    self.assertEqual(size, 8)
+
+    def test_other_alu_operand_forms_are_unchanged(self):
+        for opcode, regs, immediate, mnemonic in (
+            (0x04, 5, 16, 'add32 r5, 16'),
+            (0x0c, 0x35, 0, 'add32 r5, r3'),
+        ):
+            with self.subTest(opcode=opcode):
+                blob = struct.pack('<BBhi', opcode, regs, 0, immediate)
+                record, _ = deep_disassembly.decode_instruction(blob, 0, None)
+                self.assertEqual(record['mnemonic'], mnemonic)
+
+    def test_captured_big_endian_conversions(self):
+        for relative in ('original/mayhem', 'dependencies/spl_token_2022'):
+            with self.subTest(capture=relative):
+                elf = deep_disassembly.Elf(
+                    analyze.ROOT / 'evidence' / relative / 'deployed.so')
+                offset = elf.lo
+                widths = []
+                while offset < elf.hi:
+                    record, size = deep_disassembly.decode_instruction(elf.b, offset, elf)
+                    if elf.b[offset] == 0xdc:
+                        widths.append(record['imm'])
+                        self.assertEqual(record['mnemonic'],
+                                         f"be{record['imm']} r{record['dst']}")
+                    offset += size
+                self.assertEqual(sorted(widths), [16] + [32] * 7)
 
 
 class RelocationTargetTests(unittest.TestCase):

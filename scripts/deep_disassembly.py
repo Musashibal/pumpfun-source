@@ -151,6 +151,11 @@ def decode_instruction(b, offset, elf):
         else:
             result["mnemonic"] = f"{cond} {dst}, {imm}, {off:+d} ({hex(target)})"
         result["branch_target"] = target
+    elif opcode in (0xd4, 0xdc):
+        # Endian conversion uses the immediate as a bit width; opcode bit 3
+        # selects the direction, not a register operand.
+        direction = "le" if opcode == 0xd4 else "be"
+        result["mnemonic"] = f"{direction}{imm} {dst}"
     elif opcode & 0x07 == 0x04 or opcode & 0x07 == 0x07:
         alu_map = {
             0x04: "add32", 0x07: "add64", 0x0c: "add32", 0x0f: "add64",
@@ -166,7 +171,6 @@ def decode_instruction(b, offset, elf):
             0xa4: "xor32", 0xa7: "xor64", 0xac: "xor32", 0xaf: "xor64",
             0xb4: "mov32", 0xb7: "mov64", 0xbc: "mov32", 0xbf: "mov64",
             0xc4: "arsh32", 0xc7: "arsh64", 0xcc: "arsh32", 0xcf: "arsh64",
-            0xd4: "le", 0xdc: "be",
         }
         op = alu_map.get(opcode, f"alu_{opcode:#04x}")
         if opcode & 0x08:
