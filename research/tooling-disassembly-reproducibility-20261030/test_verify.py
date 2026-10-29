@@ -11,7 +11,7 @@ import time
 import unittest
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 class DisassemblyReproducibilityTests(unittest.TestCase):
@@ -38,9 +38,13 @@ class DisassemblyReproducibilityTests(unittest.TestCase):
 
             first, second = outputs
             files = sorted(path.name for path in first.iterdir())
+            self.assertEqual(files, sorted([
+                'README.md', 'disassembly.json.gz', 'dispatch-table.json',
+                'error-strings.json', 'extern-usage.json', 'fingerprints.json',
+                'manifest.json', 'rodata-strings.json', 'summary.json',
+                'syscall-usage.json', 'verify.py', 'windows-deep.json',
+            ]))
             self.assertEqual(files, sorted(path.name for path in second.iterdir()))
-            self.assertIn('manifest.json', files)
-            self.assertIn('disassembly.json.gz', files)
             for name in files:
                 with self.subTest(file=name):
                     self.assertEqual((first / name).read_bytes(), (second / name).read_bytes())
