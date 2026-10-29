@@ -268,14 +268,17 @@ def build_cfg_edges(instructions, window_start, window_end):
         addr = insn["offset"]
         if "branch_target" in insn:
             target = insn["branch_target"]
+            # Mnemonics include operands (e.g. "ja +8 (0x1c8)"). Use the
+            # decoded opcode so unconditional jumps never gain fallthroughs.
+            conditional = insn["opcode"] != "0x05"
             edges.append({
                 "from": hex(addr),
                 "to": hex(target),
                 "type": "branch",
-                "conditional": insn["mnemonic"].startswith("j") and insn["mnemonic"] != "ja",
+                "conditional": conditional,
             })
             # Fall-through edge for conditional branches
-            if insn["mnemonic"] != "ja":
+            if conditional:
                 next_addr = addr + (16 if insn.get("imm64") is not None else 8)
                 edges.append({
                     "from": hex(addr),

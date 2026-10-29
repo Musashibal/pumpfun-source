@@ -4,6 +4,7 @@ import struct
 import unittest
 from types import SimpleNamespace
 import deep_section_analysis
+import deep_disassembly
 import analyze
 from compare import compare
 class ComparisonTests(unittest.TestCase):
@@ -31,6 +32,56 @@ class RelocationTargetTests(unittest.TestCase):
         )
         report = deep_section_analysis.analyze_relocations(elf)
         self.assertEqual(report['entries'][0]['target_section'], '.rodata')
+
+
+class ControlFlowJumpTests(unittest.TestCase):
+    def edges(self, opcode, branch_offset=0):
+        blob = bytes(16) + struct.pack('<BBhi', opcode, 0, branch_offset, 0)
+        insn, _ = deep_disassembly.decode_instruction(blob, 16, SimpleNamespace())
+        return deep_disassembly.build_cfg_edges([insn], 0, len(blob))
+
+    def test_unconditional_forward_and_backward_jumps_have_one_edge(self):
+        for branch_offset in (0, 2, -2):
+            with self.subTest(branch_offset=branch_offset):
+                self.assertEqual(self.edges(0x05, branch_offset), [{
+                    'from': '0x10', 'to': hex(24 + branch_offset * 8),
+                    'type': 'branch', 'conditional': False,
+                }])
+
+    def test_conditional_jumps_keep_both_edges(self):
+        for opcode in (0x15, 0x1d, 0x55, 0x5d):
+            with self.subTest(opcode=hex(opcode)):
+                self.assertEqual(self.edges(opcode, -2), [
+                    {'from': '0x10', 'to': '0x8', 'type': 'branch', 'conditional': True},
+                    {'from': '0x10', 'to': '0x18', 'type': 'fallthrough', 'conditional': False},
+                ])
+
+    def test_exit_and_non_branch_behavior_is_unchanged(self):
+        self.assertEqual(self.edges(0x95), [{
+            'from': '0x10', 'to': 'return', 'type': 'exit', 'conditional': False,
+        }])
+        self.assertEqual(self.edges(0xb7), [])
+
+    def test_captured_unconditional_jumps_have_no_fallthrough(self):
+        for name in ('pump', 'pump_amm', 'pump_fees', 'mayhem'):
+            with self.subTest(program=name):
+                elf = deep_disassembly.Elf(
+                    analyze.ROOT / 'evidence/original' / name / 'deployed.so')
+                offset = elf.lo
+                jumps = invalid = 0
+                while offset < elf.hi:
+                    instruction, size = deep_disassembly.decode_instruction(elf.b, offset, elf)
+                    if elf.b[offset] == 0x05:
+                        jumps += 1
+                        edges = deep_disassembly.build_cfg_edges([instruction], elf.lo, elf.hi)
+                        expected = [{
+                            'from': hex(offset), 'to': hex(instruction['branch_target']),
+                            'type': 'branch', 'conditional': False,
+                        }]
+                        invalid += edges != expected
+                    offset += size
+                self.assertGreater(jumps, 0)
+                self.assertEqual(invalid, 0)
 
 
 class InstructionLogNameTests(unittest.TestCase):
